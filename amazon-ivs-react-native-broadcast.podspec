@@ -15,6 +15,8 @@ Pod::Spec.new do |s|
 
   s.source_files = "ios/**/*.{h,m,mm,swift}"
 
+  s.pod_target_xcconfig = { 'ENABLE_BITCODE' => 'NO' }
+
   s.dependency "React-Core"
   s.dependency "AmazonIVSBroadcast", "~> #{package["sdkVersion"]["ios"]}"
 end

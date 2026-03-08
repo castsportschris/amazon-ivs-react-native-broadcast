@@ -9,7 +9,7 @@
   "source": "src/index",
   "sdkVersion": {
     "ios": "1.7.1",
-    "android": "1.7.2"
+    "android": "1.29.0"
   },
   "files": [
     "src",

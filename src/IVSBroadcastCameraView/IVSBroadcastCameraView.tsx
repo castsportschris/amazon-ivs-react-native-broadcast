@@ -24,8 +24,10 @@ const isNumber = (value: unknown): value is number => typeof value === 'number';
 const UNKNOWN = 'unknown';
 export const NATIVE_VIEW_NAME = 'RCTIVSBroadcastCameraView';
 
+// New Architecture (RN 0.76+): UIManager.getViewManagerConfig returns null for
+// old-arch view managers. Fall back to string command names in that case.
 const NATIVE_SIDE_COMMANDS =
-  UIManager.getViewManagerConfig(NATIVE_VIEW_NAME).Commands;
+  UIManager.getViewManagerConfig(NATIVE_VIEW_NAME)?.Commands ?? null;
 
 const RCTIVSBroadcastCameraView =
   requireNativeComponent<IIVSBroadcastCameraNativeViewProps>(NATIVE_VIEW_NAME);
@@ -36,7 +38,8 @@ export const getCommandIdByPlatform = (command: Command) => {
       return command;
     }
     case 'ios': {
-      return NATIVE_SIDE_COMMANDS[command];
+      // New arch: NATIVE_SIDE_COMMANDS is null; use string name directly (same as Android)
+      return NATIVE_SIDE_COMMANDS ? NATIVE_SIDE_COMMANDS[command] : command;
     }
     default: {
       return '';
