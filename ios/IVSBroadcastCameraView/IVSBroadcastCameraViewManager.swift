@@ -14,22 +14,36 @@ class IVSBroadcastCameraViewManager: RCTViewManager {
   // Static methods
   @objc public func START(_ node: NSNumber, options: NSDictionary) {
     DispatchQueue.main.async {
-      let component = self.bridge.uiManager.view(forReactTag: node) as! IVSBroadcastCameraView
+      guard let component = self.bridge.uiManager.view(forReactTag: node) as? IVSBroadcastCameraView else { return }
       component.start(options)
     }
   }
-  
+
   @objc public func STOP(_ node: NSNumber) {
     DispatchQueue.main.async {
-      let component = self.bridge.uiManager.view(forReactTag: node) as! IVSBroadcastCameraView
+      guard let component = self.bridge.uiManager.view(forReactTag: node) as? IVSBroadcastCameraView else { return }
       component.stop()
     }
   }
-  
+
+  @objc public func START_RECORDING(_ node: NSNumber) {
+    DispatchQueue.main.async {
+      guard let component = self.bridge.uiManager.view(forReactTag: node) as? IVSBroadcastCameraView else { return }
+      component.startRecording()
+    }
+  }
+
+  @objc public func STOP_RECORDING(_ node: NSNumber) {
+    DispatchQueue.main.async {
+      guard let component = self.bridge.uiManager.view(forReactTag: node) as? IVSBroadcastCameraView else { return }
+      component.stopRecording()
+    }
+  }
+
   @available(*, message: "@Deprecated in favor of cameraPosition prop.")
   @objc public func SWAP_CAMERA(_ node: NSNumber) {
     DispatchQueue.main.async {
-      let component = self.bridge.uiManager.view(forReactTag: node) as! IVSBroadcastCameraView
+      guard let component = self.bridge.uiManager.view(forReactTag: node) as? IVSBroadcastCameraView else { return }
       component.swapCamera()
     }
   }

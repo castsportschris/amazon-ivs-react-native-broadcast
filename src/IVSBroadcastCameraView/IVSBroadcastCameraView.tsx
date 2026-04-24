@@ -36,7 +36,10 @@ export const getCommandIdByPlatform = (command: Command) => {
       return command;
     }
     case 'ios': {
-      return NATIVE_SIDE_COMMANDS[command];
+      // Fall back to the string command name when the cached Commands dict
+      // doesn't have an entry (e.g. new commands not yet in the static map).
+      // Both Paper and Fabric accept string command names.
+      return NATIVE_SIDE_COMMANDS?.[command] ?? command;
     }
     default: {
       return '';
@@ -61,6 +64,7 @@ const IVSBroadcastCameraView = forwardRef<
     onAudioSessionResumed,
     onMediaServicesWereLost,
     onMediaServicesWereReset,
+    onLocalRecordingSaved,
     isMuted = false,
     isCameraPreviewMirrored = false,
     cameraPosition = 'back',
@@ -92,6 +96,10 @@ const IVSBroadcastCameraView = forwardRef<
           options: Parameters<IIVSBroadcastCameraView['start']>[number] = {}
         ) => dispatchViewManagerCommand(Command.Start, options),
         stop: () => dispatchViewManagerCommand(Command.Stop),
+        startRecording: () =>
+          dispatchViewManagerCommand(Command.StartRecording),
+        stopRecording: () =>
+          dispatchViewManagerCommand(Command.StopRecording),
         /**
          * @deprecated in favor of {@link cameraPosition}
          */
@@ -181,6 +189,10 @@ const IVSBroadcastCameraView = forwardRef<
   const onMediaServicesWereResetHandler: IIVSBroadcastCameraNativeViewProps['onMediaServicesWereReset'] =
     () => onMediaServicesWereReset?.();
 
+  const onLocalRecordingSavedHandler = (event: any) => {
+    onLocalRecordingSaved?.({ uri: event.nativeEvent.uri });
+  };
+
   return (
     <RCTIVSBroadcastCameraView
       testID={NATIVE_VIEW_NAME}
@@ -204,6 +216,7 @@ const IVSBroadcastCameraView = forwardRef<
       onAudioSessionResumed={onAudioSessionResumedHandler}
       onMediaServicesWereLost={onMediaServicesWereLostHandler}
       onMediaServicesWereReset={onMediaServicesWereResetHandler}
+      onLocalRecordingSaved={onLocalRecordingSavedHandler}
     />
   );
 });

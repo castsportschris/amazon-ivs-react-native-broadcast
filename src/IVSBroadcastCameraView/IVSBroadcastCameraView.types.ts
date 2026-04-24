@@ -10,6 +10,8 @@ export type ExtractComponentProps<T> = T extends
 export enum Command {
   Start = 'START',
   Stop = 'STOP',
+  StartRecording = 'START_RECORDING',
+  StopRecording = 'STOP_RECORDING',
   /**
    * @deprecated in favor of {@link CameraPosition}
    */
@@ -165,6 +167,7 @@ export interface INativeEventHandlers {
   onTransmissionStatisticsChanged: IEventHandler<
     Readonly<{ statistics: INativeTransmissionStatistics }>
   >;
+  onLocalRecordingSaved: IEventHandler<Readonly<{ uri: string }>>;
   onAudioSessionInterrupted(): void;
   onAudioSessionResumed(): void;
   onMediaServicesWereLost(): void;
@@ -190,6 +193,27 @@ interface IBaseProps {
   readonly isCameraPreviewMirrored?: boolean;
   readonly cameraPosition?: CameraPosition;
   readonly isMuted?: boolean;
+  /**
+   * When true, the SDK uses a custom camera pipeline instead of the IVS
+   * SDK's built-in camera management, enabling simultaneous local recording
+   * to the device alongside live streaming. The local MP4 is saved to the
+   * device's gallery when the broadcast stops.
+   *
+   * On iOS: AVCaptureSession + AVAssetWriter.
+   * On Android: Camera2 + MediaCodec/MediaMuxer.
+   *
+   * Default: false (standard IVS-managed camera, no local recording).
+   */
+  readonly isLocalRecordingEnabled?: boolean;
+  /**
+   * When true, the component sets up only the local recording service for
+   * camera preview and on-device recording — no IVS broadcast session is
+   * created. Use the `startRecording()` / `stopRecording()` imperative
+   * methods to control recording. The saved MP4 triggers `onLocalRecordingSaved`.
+   *
+   * Default: false.
+   */
+  readonly isRecordOnlyMode?: boolean;
 }
 
 export interface IEventHandlers {
@@ -216,6 +240,16 @@ export interface IEventHandlers {
   onAudioSessionResumed?(): void;
   onMediaServicesWereLost?(): void;
   onMediaServicesWereReset?(): void;
+  /**
+   * Called when the local recording has been saved to the device's gallery
+   * after a broadcast ends (or after `stopRecording()` in record-only mode).
+   * Only fires when `isLocalRecordingEnabled` or `isRecordOnlyMode` is true.
+   *
+   * @param uri - The URI of the saved MP4.
+   *   iOS: file:// URI pointing to the temp file (available until cleaned up).
+   *   Android: content:// URI from MediaStore.
+   */
+  onLocalRecordingSaved?(event: { uri: string }): void;
 }
 
 export interface IIVSBroadcastCameraViewProps
@@ -230,6 +264,17 @@ type StartMethodOptions = Pick<IBaseProps, 'rtmpsUrl' | 'streamKey'>;
 export interface IIVSBroadcastCameraView {
   start(options?: StartMethodOptions): void;
   stop(): void;
+  /**
+   * Start local-only recording (record-only mode or manual recording control).
+   * Begins writing an MP4 to the device; triggers `onLocalRecordingSaved` when
+   * `stopRecording()` is called.
+   */
+  startRecording(): void;
+  /**
+   * Stop local-only recording. Finalizes the MP4, saves to the device gallery,
+   * and fires `onLocalRecordingSaved` with the file URI.
+   */
+  stopRecording(): void;
   /**
    * @deprecated in favor of {@link CameraPosition}
    */

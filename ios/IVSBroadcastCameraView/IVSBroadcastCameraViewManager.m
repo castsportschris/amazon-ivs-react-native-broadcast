@@ -14,6 +14,8 @@ RCT_EXPORT_VIEW_PROPERTY(cameraPosition, NSString)
 RCT_EXPORT_VIEW_PROPERTY(isCameraPreviewMirrored, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(logLevel, NSString)
 RCT_EXPORT_VIEW_PROPERTY(sessionLogLevel, NSString)
+RCT_EXPORT_VIEW_PROPERTY(isLocalRecordingEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(isRecordOnlyMode, BOOL)
 
 // Event handlers props
 RCT_EXPORT_VIEW_PROPERTY(onIsBroadcastReady, RCTDirectEventBlock)
@@ -30,10 +32,13 @@ RCT_EXPORT_VIEW_PROPERTY(onBroadcastQualityChanged, RCTDirectEventBlock)
 // @Deprecated in favor of onTransmissionStatisticsChanged event handler
 RCT_EXPORT_VIEW_PROPERTY(onNetworkHealthChanged, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onTransmissionStatisticsChanged, RCTDirectEventBlock)
+RCT_EXPORT_VIEW_PROPERTY(onLocalRecordingSaved, RCTDirectEventBlock)
 
 // Methods
 RCT_EXTERN_METHOD(START:(nonnull NSNumber *)node options:(NSDictionary)options)
 RCT_EXTERN_METHOD(STOP:(nonnull NSNumber *)node)
+RCT_EXTERN_METHOD(START_RECORDING:(nonnull NSNumber *)node)
+RCT_EXTERN_METHOD(STOP_RECORDING:(nonnull NSNumber *)node)
 // @Deprecated in favor of cameraPosition prop
 RCT_EXTERN_METHOD(SWAP_CAMERA:(nonnull NSNumber *)node)
 @end

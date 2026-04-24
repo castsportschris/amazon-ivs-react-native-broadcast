@@ -1,5 +1,7 @@
 package com.amazonivsreactnativebroadcast.IVSBroadcastCameraView;
 
+import android.view.View;
+
 import com.amazonaws.ivs.broadcast.*;
 
 import androidx.annotation.NonNull;
@@ -12,7 +14,7 @@ import com.facebook.react.uimanager.ThemedReactContext;
 
 @FunctionalInterface
 interface CameraPreviewHandler {
-  void run(ImagePreviewView cameraPreview);
+  void run(View cameraPreview);
 }
 
 @FunctionalInterface
@@ -38,6 +40,13 @@ public class IVSBroadcastSessionService {
   private String sessionId;
   private BroadcastSession broadcastSession;
   private BroadcastConfiguration config = new BroadcastConfiguration();
+
+  // ── Local recording support ──────────────────────────────────────────
+  boolean isLocalRecordingEnabled = false;
+  boolean isRecordOnlyMode = false;
+  private IVSLocalRecordingService localRecordingService;
+  private SurfaceSource customImageSource;
+  private AudioDevice customAudioSource;
 
   private RunnableCallback broadcastEventHandler;
   private final BroadcastSession.Listener broadcastSessionListener = new BroadcastSession.Listener() {
@@ -315,9 +324,11 @@ public class IVSBroadcastSessionService {
   }
 
   private void postInitialization() {
-    broadcastSession.setLogLevel(initialSessionLogLevel);
+    if (broadcastSession != null) {
+      broadcastSession.setLogLevel(initialSessionLogLevel);
+    }
     if (isInitialMuted) {
-      muteAsync(true);
+      setIsMuted(true);
     }
   }
 
@@ -331,11 +342,46 @@ public class IVSBroadcastSessionService {
     }
   }
 
+  /**
+   * Create the local recording service with callbacks wired to the
+   * broadcast event handler.
+   */
+  private IVSLocalRecordingService createLocalRecordingService() {
+    IVSLocalRecordingService service = new IVSLocalRecordingService();
+
+    service.onRecordingSaved = (uri) -> {
+      WritableMap payload = Arguments.createMap();
+      payload.putString("uri", uri);
+      broadcastEventHandler.run(Events.ON_LOCAL_RECORDING_SAVED, payload);
+    };
+
+    service.onError = (message) -> {
+      WritableMap payload = Arguments.createMap();
+      WritableMap exception = Arguments.createMap();
+      exception.putString("detail", message);
+      exception.putString("source", "LocalRecording");
+      exception.putBoolean("isFatal", false);
+      payload.putMap("exception", exception);
+      broadcastEventHandler.run(Events.ON_ERROR, payload);
+    };
+
+    return service;
+  }
+
+  /**
+   * Get the camera position string ("front" / "back") from the stored
+   * {@link Device.Descriptor.Position}.
+   */
+  private String getCameraPositionString() {
+    return initialCameraPosition == Device.Descriptor.Position.FRONT ? "front" : "back";
+  }
+
   public enum Events {
     ON_ERROR("onError"),
     ON_STATE_CHANGED("onStateChanged"),
     ON_AUDIO_STATS("onAudioStats"),
     ON_TRANSMISSION_STATISTICS_CHANGED("onTransmissionStatisticsChanged"),
+    ON_LOCAL_RECORDING_SAVED("onLocalRecordingSaved"),
     @Deprecated
     ON_QUALITY_CHANGED("onQualityChanged"),
     @Deprecated
@@ -357,12 +403,75 @@ public class IVSBroadcastSessionService {
     mReactContext = reactContext;
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  //  Initialization — three modes
+  // ════════════════════════════════════════════════════════════════════════
+
   public void init() {
     if (isInitialized()) {
       throw new RuntimeException("Broadcast session has been already initialized.");
-    } else {
-      preInitialization();
+    }
 
+    preInitialization();
+
+    BroadcastConfiguration.Vec2 videoSize = config.video.getSize();
+    int videoWidth = (int) videoSize.x;
+    int videoHeight = (int) videoSize.y;
+    int videoBitrate = config.video.getInitialBitrate();
+
+    if (isRecordOnlyMode) {
+      // ── Record-only: no IVS session, just local camera + recording ──
+      localRecordingService = createLocalRecordingService();
+      localRecordingService.configure(
+        mReactContext, getCameraPositionString(), videoWidth, videoHeight, videoBitrate
+      );
+
+    } else if (isLocalRecordingEnabled) {
+      // ── Live + record: IVS session with custom sources + local recording ──
+
+      // Configure a mixer slot for custom sources
+      BroadcastConfiguration.Mixer.Slot slot = BroadcastConfiguration.Mixer.Slot.with($ -> {
+        $.setSize(new BroadcastConfiguration.Vec2(videoWidth, videoHeight));
+        $.setPosition(new BroadcastConfiguration.Vec2(0, 0));
+        $.setName("custom-slot");
+        return $;
+      });
+
+      config = config.changing($ -> {
+        $.mixer.slots = new BroadcastConfiguration.Mixer.Slot[]{ slot };
+        return $;
+      });
+
+      // Create session without built-in devices
+      broadcastSession = new BroadcastSession(
+        mReactContext,
+        broadcastSessionListener,
+        config,
+        null // no built-in devices
+      );
+
+      // Create custom image source and bind to mixer
+      customImageSource = broadcastSession.createImageInputSource(
+        new BroadcastConfiguration.Vec2(videoWidth, videoHeight)
+      );
+      broadcastSession.getMixer().bind(customImageSource, "custom-slot");
+
+      // Create custom audio source and bind to mixer
+      customAudioSource = broadcastSession.createAudioInputSource(
+        2, 48000, AudioDevice.Format.INT16
+      );
+      broadcastSession.getMixer().bind(customAudioSource, "custom-slot");
+
+      // Create local recording service with IVS custom sources
+      localRecordingService = createLocalRecordingService();
+      localRecordingService.customImageSource = customImageSource;
+      localRecordingService.customAudioSource = customAudioSource;
+      localRecordingService.configure(
+        mReactContext, getCameraPositionString(), videoWidth, videoHeight, videoBitrate
+      );
+
+    } else {
+      // ── Standard: IVS-managed camera, no local recording ──
       broadcastSession = new BroadcastSession(
         mReactContext,
         broadcastSessionListener,
@@ -371,34 +480,77 @@ public class IVSBroadcastSessionService {
       );
 
       saveInitialDevicesDescriptor(getInitialDeviceDescriptorList());
-
-      postInitialization();
     }
+
+    postInitialization();
   }
 
   public void deinit() {
-    if (isInitialized()) {
+    if (localRecordingService != null) {
+      localRecordingService.tearDown();
+      localRecordingService = null;
+    }
+    if (broadcastSession != null) {
       broadcastSession.release();
       broadcastSession = null;
     }
+    customImageSource = null;
+    customAudioSource = null;
   }
 
   public boolean isInitialized() {
+    if (isRecordOnlyMode) {
+      return localRecordingService != null;
+    }
     return broadcastSession != null;
   }
 
   public boolean isReady() {
-    return broadcastSession.isReady();
+    if (isRecordOnlyMode) {
+      return localRecordingService != null;
+    }
+    return broadcastSession != null && broadcastSession.isReady();
   }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Broadcast + recording control
+  // ════════════════════════════════════════════════════════════════════════
 
   public void start(@Nullable String ivsRTMPSUrl, @Nullable String ivsStreamKey) {
     broadcastSession.start(ivsRTMPSUrl, ivsStreamKey);
     sessionId = broadcastSession.getSessionId();
+
+    // In live+record mode, start local recording alongside the broadcast
+    if (isLocalRecordingEnabled && localRecordingService != null) {
+      localRecordingService.startRecording();
+    }
   }
 
   public void stop() {
+    // Stop local recording first so the file is finalized before broadcast stops
+    if (isLocalRecordingEnabled && localRecordingService != null) {
+      localRecordingService.stopRecording();
+    }
     broadcastSession.stop();
   }
+
+  /** Start recording independently (record-only mode). */
+  public void startRecording() {
+    if (localRecordingService != null) {
+      localRecordingService.startRecording();
+    }
+  }
+
+  /** Stop recording independently (record-only mode). */
+  public void stopRecording() {
+    if (localRecordingService != null) {
+      localRecordingService.stopRecording();
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  //  Camera preview
+  // ════════════════════════════════════════════════════════════════════════
 
   @Deprecated
   public void swapCamera(CameraPreviewHandler callback) {
@@ -406,14 +558,33 @@ public class IVSBroadcastSessionService {
   }
 
   public void getCameraPreviewAsync(CameraPreviewHandler callback) {
-    broadcastSession.awaitDeviceChanges(() -> {
-      callback.run(getCameraPreview());
-    });
+    if (isRecordOnlyMode || isLocalRecordingEnabled) {
+      if (localRecordingService != null) {
+        View preview = localRecordingService.getPreviewView();
+        if (preview != null) {
+          callback.run(preview);
+        }
+      }
+    } else {
+      broadcastSession.awaitDeviceChanges(() -> {
+        callback.run(getCameraPreview());
+      });
+    }
   }
 
   public void setCameraPosition(String cameraPositionName, CameraPreviewHandler callback) {
     if (isInitialized()) {
-      swapCameraAsync(callback);
+      if (isLocalRecordingEnabled || isRecordOnlyMode) {
+        if (localRecordingService != null) {
+          localRecordingService.swapCamera();
+          View preview = localRecordingService.getPreviewView();
+          if (preview != null) {
+            callback.run(preview);
+          }
+        }
+      } else {
+        swapCameraAsync(callback);
+      }
     } else {
       initialCameraPosition = getCameraPosition(cameraPositionName);
     }
@@ -429,21 +600,53 @@ public class IVSBroadcastSessionService {
   public void setIsCameraPreviewMirrored(boolean isPreviewMirrored, CameraPreviewHandler callback) {
     isCameraPreviewMirrored = isPreviewMirrored;
     if (isInitialized()) {
-      getCameraPreviewAsync(callback);
+      if (isLocalRecordingEnabled || isRecordOnlyMode) {
+        if (localRecordingService != null) {
+          View preview = localRecordingService.getPreviewView();
+          if (preview != null) {
+            preview.setScaleX(isPreviewMirrored ? -1.0f : 1.0f);
+            callback.run(preview);
+          }
+        }
+      } else {
+        getCameraPreviewAsync(callback);
+      }
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  //  Mute
+  // ════════════════════════════════════════════════════════════════════════
+
   public void setIsMuted(boolean isMuted) {
     if (isInitialized()) {
-      muteAsync(isMuted);
+      if (isLocalRecordingEnabled || isRecordOnlyMode) {
+        if (localRecordingService != null) {
+          localRecordingService.setMuted(isMuted);
+        }
+      } else {
+        muteAsync(isMuted);
+      }
     } else {
       isInitialMuted = isMuted;
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  //  Configuration setters
+  // ════════════════════════════════════════════════════════════════════════
+
+  public void setIsLocalRecordingEnabled(boolean enabled) {
+    isLocalRecordingEnabled = enabled;
+  }
+
+  public void setIsRecordOnlyMode(boolean enabled) {
+    isRecordOnlyMode = enabled;
+  }
+
   public void setSessionLogLevel(String sessionLogLevelName) {
     BroadcastConfiguration.LogLevel sessionLogLevel = getLogLevel(sessionLogLevelName);
-    if (isInitialized()) {
+    if (isInitialized() && broadcastSession != null) {
       broadcastSession.setLogLevel(sessionLogLevel);
     } else {
       initialSessionLogLevel = sessionLogLevel;

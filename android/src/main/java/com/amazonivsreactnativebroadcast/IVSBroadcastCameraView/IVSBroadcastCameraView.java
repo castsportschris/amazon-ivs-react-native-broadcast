@@ -17,6 +17,8 @@ import com.facebook.react.uimanager.events.RCTEventEmitter;
 public class IVSBroadcastCameraView extends FrameLayout implements LifecycleEventListener {
   public static final String START_COMMAND_NAME = "START";
   public static final String STOP_COMMAND_NAME = "STOP";
+  public static final String START_RECORDING_COMMAND_NAME = "START_RECORDING";
+  public static final String STOP_RECORDING_COMMAND_NAME = "STOP_RECORDING";
   @Deprecated
   public static final String SWAP_CAMERA_COMMAND_NAME = "SWAP_CAMERA";
 
@@ -27,6 +29,7 @@ public class IVSBroadcastCameraView extends FrameLayout implements LifecycleEven
     ON_BROADCAST_STATE_CHANGED("onBroadcastStateChanged"),
     ON_BROADCAST_AUDIO_STATS("onBroadcastAudioStats"),
     ON_TRANSMISSION_STATISTICS_CHANGED("onTransmissionStatisticsChanged"),
+    ON_LOCAL_RECORDING_SAVED("onLocalRecordingSaved"),
     @Deprecated
     ON_BROADCAST_QUALITY_CHANGED("onBroadcastQualityChanged"),
     @Deprecated
@@ -93,6 +96,10 @@ public class IVSBroadcastCameraView extends FrameLayout implements LifecycleEven
       }
       case ON_NETWORK_HEALTH_CHANGED: {
         sendEvent(Events.ON_NETWORK_HEALTH_CHANGED.toString(), eventPayload);
+        break;
+      }
+      case ON_LOCAL_RECORDING_SAVED: {
+        sendEvent(Events.ON_LOCAL_RECORDING_SAVED.toString(), eventPayload);
         break;
       }
       default: {
@@ -186,6 +193,30 @@ public class IVSBroadcastCameraView extends FrameLayout implements LifecycleEven
     } catch (RuntimeException error) {
       sendErrorEvent(error.toString());
     }
+  }
+
+  protected void startRecording() {
+    try {
+      ivsBroadcastSession.startRecording();
+    } catch (RuntimeException error) {
+      sendErrorEvent(error.toString());
+    }
+  }
+
+  protected void stopRecording() {
+    try {
+      ivsBroadcastSession.stopRecording();
+    } catch (RuntimeException error) {
+      sendErrorEvent(error.toString());
+    }
+  }
+
+  protected void setIsLocalRecordingEnabled(boolean enabled) {
+    ivsBroadcastSession.setIsLocalRecordingEnabled(enabled);
+  }
+
+  protected void setIsRecordOnlyMode(boolean enabled) {
+    ivsBroadcastSession.setIsRecordOnlyMode(enabled);
   }
 
   protected void cleanUp() {

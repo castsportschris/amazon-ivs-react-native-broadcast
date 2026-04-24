@@ -1,7 +1,7 @@
 import AmazonIVSBroadcast
 import Foundation
 
-typealias onReceiveCameraPreviewHandler = (_: IVSImagePreviewView) -> Void
+typealias onReceiveCameraPreviewHandler = (_: UIView) -> Void
 
 enum BuiltInCameraUrns: String {
   case backUltraWideCamera = "com.apple.avfoundation.avcapturedevice.built-in_video:5"
@@ -18,13 +18,23 @@ class IVSBroadcastSessionService: NSObject {
   private var cameraPreviewAspectMode: IVSBroadcastConfiguration.AspectMode = .none
   private var customVideoConfig: NSDictionary?
   private var customAudioConfig: NSDictionary?
-  
+
   private var attachedCameraUrn: String = ""
   private var attachedMicrophoneUrn: String = ""
-  
+
   private var broadcastSession: IVSBroadcastSession?
   private var config = IVSBroadcastConfiguration()
-  
+
+  // Local recording support — when enabled, we own the AVCaptureSession and
+  // feed frames to IVS via custom sources while simultaneously writing to disk.
+  var isLocalRecordingEnabled: Bool = false
+  /// When true, only the local recording service is created (no IVS session).
+  var isRecordOnlyMode: Bool = false
+  private var localRecordingService: IVSLocalRecordingService?
+  private var customImageSource: (any IVSCustomImageSource)?
+  private var customAudioSource: (any IVSCustomAudioSource)?
+  var onLocalRecordingSaved: ((_ fileURL: URL) -> Void)?
+
   private var onBroadcastError: RCTDirectEventBlock?
   private var onBroadcastAudioStats: RCTDirectEventBlock?
   private var onBroadcastStateChanged: RCTDirectEventBlock?
@@ -276,31 +286,114 @@ class IVSBroadcastSessionService: NSObject {
   public func initiate() throws {
     if (!self.isInitialized()) {
       try self.preInitiation()
-      let initialDeviceDescriptorList = getInitialDeviceDescriptorList()
-      
-      self.broadcastSession = try IVSBroadcastSession(
-        configuration: self.config,
-        descriptors: initialDeviceDescriptorList,
-        delegate: self
-      )
-      
-      self.saveInitialDevicesUrn(initialDeviceDescriptorList)
+
+      print("[IVSBroadcast] initiate() — isLocalRecordingEnabled=\(isLocalRecordingEnabled), isRecordOnlyMode=\(isRecordOnlyMode)")
+      if isRecordOnlyMode {
+        // ── Record-only: no IVS session at all, just local camera + recording ──
+        let recordingService = IVSLocalRecordingService()
+        recordingService.onRecordingSaved = { [weak self] fileURL in
+          self?.onLocalRecordingSaved?(fileURL)
+        }
+        recordingService.onError = { error in
+          print("[IVSBroadcast] Local recording error: \(error)")
+        }
+
+        let cameraPos: AVCaptureDevice.Position = self.initialCameraPosition == .front ? .front : .back
+        let width = Int(self.config.video.size.width)
+        let height = Int(self.config.video.size.height)
+        let bitrate = Int(self.config.video.initialBitrate)
+        recordingService.configure(cameraPosition: cameraPos, videoWidth: width, videoHeight: height, videoBitrate: bitrate)
+
+        self.localRecordingService = recordingService
+        print("[IVSBroadcast] Record-only mode initialized (no IVS session)")
+      } else if isLocalRecordingEnabled {
+        // ── Following the official Amazon IVS custom sources sample exactly:
+        // https://github.com/aws-samples/amazon-ivs-broadcast-ios-sample
+        //   /BasicBroadcast/ViewControllers/CustomSourcesViewController.swift
+
+        // 1. Configure mixer slot for custom sources
+        let customSlot = IVSMixerSlotConfiguration()
+        customSlot.size = self.config.video.size
+        customSlot.position = CGPoint(x: 0, y: 0)
+        customSlot.preferredAudioInput = .userAudio
+        customSlot.preferredVideoInput = .userImage
+        try customSlot.setName("custom-slot")
+        self.config.mixer.slots = [customSlot]
+
+        // 2. Our AVCaptureSession manages the audio session
+        IVSBroadcastSession.applicationAudioSessionStrategy = .noAction
+
+        // 3. Create session with NO built-in devices
+        self.broadcastSession = try IVSBroadcastSession(
+          configuration: self.config,
+          descriptors: nil,
+          delegate: self
+        )
+
+        // 4. Create custom sources and attach to the slot
+        let audSource = self.broadcastSession!.createAudioSource(withName: "custom-audio")
+        self.broadcastSession!.attach(audSource, toSlotWithName: "custom-slot")
+        self.customAudioSource = audSource
+
+        let imgSource = self.broadcastSession!.createImageSource(withName: "custom-image")
+        self.broadcastSession!.attach(imgSource, toSlotWithName: "custom-slot")
+        self.customImageSource = imgSource
+
+        print("[IVSBroadcast] Custom sources created and attached")
+
+        // Set up the local recording service with our custom sources
+        let recordingService = IVSLocalRecordingService()
+        recordingService.customImageSource = imgSource
+        recordingService.customAudioSource = audSource
+        recordingService.onRecordingSaved = { [weak self] fileURL in
+          self?.onLocalRecordingSaved?(fileURL)
+        }
+        recordingService.onError = { error in
+          print("[IVSBroadcast] Local recording error: \(error)")
+        }
+
+        // Configure with camera position + video dimensions from the broadcast config
+        let cameraPos: AVCaptureDevice.Position = self.initialCameraPosition == .front ? .front : .back
+        let width = Int(self.config.video.size.width)
+        let height = Int(self.config.video.size.height)
+        let bitrate = Int(self.config.video.initialBitrate)
+        recordingService.configure(cameraPosition: cameraPos, videoWidth: width, videoHeight: height, videoBitrate: bitrate)
+
+        self.localRecordingService = recordingService
+      } else {
+        // Standard mode: let the IVS SDK manage the camera internally
+        let initialDeviceDescriptorList = getInitialDeviceDescriptorList()
+
+        self.broadcastSession = try IVSBroadcastSession(
+          configuration: self.config,
+          descriptors: initialDeviceDescriptorList,
+          delegate: self
+        )
+
+        self.saveInitialDevicesUrn(initialDeviceDescriptorList)
+      }
+
       self.postInitiation()
     } else {
       assertionFailure("Broadcast session has been already initialized.")
     }
   }
-  
+
   public func deinitiate() {
+    localRecordingService?.tearDown()
+    localRecordingService = nil
     self.broadcastSession?.stop()
     self.broadcastSession = nil
   }
   
   public func isInitialized() -> Bool {
-    return self.broadcastSession != nil
+    return self.broadcastSession != nil || (isRecordOnlyMode && localRecordingService != nil)
   }
   
   public func isReady() -> Bool {
+    if isRecordOnlyMode {
+      return localRecordingService != nil
+    }
     guard let isReady = self.broadcastSession?.isReady else {
       return false
     }
@@ -312,10 +405,30 @@ class IVSBroadcastSessionService: NSObject {
       throw IVSBroadcastCameraViewError("[start] Can not create a URL instance for: \(ivsRTMPSUrl)")
     }
     try self.broadcastSession?.start(with: url, streamKey: ivsStreamKey as String)
+
+    // Start local recording alongside the broadcast
+    if isLocalRecordingEnabled {
+      localRecordingService?.startRecording()
+    }
   }
-  
+
   public func stop() {
     self.broadcastSession?.stop()
+
+    // Stop local recording — this finalizes the AVAssetWriter and saves to Photos
+    if isLocalRecordingEnabled {
+      localRecordingService?.stopRecording()
+    }
+  }
+
+  /// Start local recording independently (used by record-only mode).
+  public func startRecording() {
+    localRecordingService?.startRecording()
+  }
+
+  /// Stop local recording independently (used by record-only mode).
+  public func stopRecording() {
+    localRecordingService?.stopRecording()
   }
   
   @available(*, message: "@Deprecated in favor of setCameraPosition method.")
@@ -324,6 +437,24 @@ class IVSBroadcastSessionService: NSObject {
   }
   
   public func getCameraPreviewAsync(_ onReceiveCameraPreview: @escaping onReceiveCameraPreviewHandler) {
+    if isRecordOnlyMode {
+      // Record-only: use the AVCaptureVideoPreviewLayer from the recording service
+      if let preview = localRecordingService?.previewLayer {
+        let container = PreviewLayerView(previewLayer: preview)
+        onReceiveCameraPreview(container)
+      }
+      return
+    }
+
+    if isLocalRecordingEnabled, let imgSource = self.customImageSource {
+      // Use the IVS custom source's own preview view — this renders
+      // the frames as they flow through the SDK, matching what viewers see.
+      if let preview = try? imgSource.previewView(with: self.cameraPreviewAspectMode) {
+        onReceiveCameraPreview(preview)
+      }
+      return
+    }
+
     self.broadcastSession?.awaitDeviceChanges { () -> Void in
       if let cameraPreview = self.getCameraPreview() {
         onReceiveCameraPreview(cameraPreview)
@@ -334,7 +465,12 @@ class IVSBroadcastSessionService: NSObject {
   public func setCameraPosition(_ cameraPosition: NSString?, _ onReceiveCameraPreview: @escaping onReceiveCameraPreviewHandler) {
     if let cameraPositionName = cameraPosition {
       if (self.isInitialized()) {
-        self.swapCameraAsync(onReceiveCameraPreview)
+        if isRecordOnlyMode || isLocalRecordingEnabled {
+          localRecordingService?.swapCamera()
+          self.getCameraPreviewAsync(onReceiveCameraPreview)
+        } else {
+          self.swapCameraAsync(onReceiveCameraPreview)
+        }
       } else {
         self.initialCameraPosition = self.getCameraPosition(cameraPositionName)
       }
@@ -361,7 +497,11 @@ class IVSBroadcastSessionService: NSObject {
   
   public func setIsMuted(_ isMuted: Bool) {
     if (self.isInitialized()) {
-      self.muteAsync(isMuted)
+      if isRecordOnlyMode || isLocalRecordingEnabled {
+        localRecordingService?.setMuted(isMuted)
+      } else {
+        self.muteAsync(isMuted)
+      }
     } else {
       self.isInitialMuted = isMuted
     }
@@ -481,5 +621,26 @@ extension IVSBroadcastSessionService: IVSBroadcastSession.Delegate {
         ]
       ])
     }
+  }
+}
+
+/// A simple UIView that hosts an AVCaptureVideoPreviewLayer and keeps it
+/// sized to fill the view's bounds on every layout pass.
+private class PreviewLayerView: UIView {
+  private let previewLayer: AVCaptureVideoPreviewLayer
+
+  init(previewLayer: AVCaptureVideoPreviewLayer) {
+    self.previewLayer = previewLayer
+    super.init(frame: .zero)
+    self.layer.addSublayer(previewLayer)
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    previewLayer.frame = bounds
   }
 }

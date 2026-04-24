@@ -31,9 +31,13 @@ public class IVSBroadcastCameraViewManger extends ViewGroupManager<IVSBroadcastC
   @Nullable
   @Override
   public Map<String, Integer> getCommandsMap() {
-    return MapBuilder.of(IVSBroadcastCameraView.START_COMMAND_NAME, 0,
-      IVSBroadcastCameraView.STOP_COMMAND_NAME, 1,
-      IVSBroadcastCameraView.SWAP_CAMERA_COMMAND_NAME, 2);
+    Map<String, Integer> map = new HashMap<>();
+    map.put(IVSBroadcastCameraView.START_COMMAND_NAME, 0);
+    map.put(IVSBroadcastCameraView.STOP_COMMAND_NAME, 1);
+    map.put(IVSBroadcastCameraView.SWAP_CAMERA_COMMAND_NAME, 2);
+    map.put(IVSBroadcastCameraView.START_RECORDING_COMMAND_NAME, 3);
+    map.put(IVSBroadcastCameraView.STOP_RECORDING_COMMAND_NAME, 4);
+    return map;
   }
 
   @Override
@@ -49,6 +53,14 @@ public class IVSBroadcastCameraViewManger extends ViewGroupManager<IVSBroadcastC
       }
       case IVSBroadcastCameraView.SWAP_CAMERA_COMMAND_NAME: {
         view.swapCamera();
+        break;
+      }
+      case IVSBroadcastCameraView.START_RECORDING_COMMAND_NAME: {
+        view.startRecording();
+        break;
+      }
+      case IVSBroadcastCameraView.STOP_RECORDING_COMMAND_NAME: {
+        view.stopRecording();
         break;
       }
       default: {
@@ -121,5 +133,15 @@ public class IVSBroadcastCameraViewManger extends ViewGroupManager<IVSBroadcastC
   @ReactProp(name = "audioConfig")
   public void setAudioConfig(@NonNull IVSBroadcastCameraView view, ReadableMap audioConfig) {
     view.setAudioConfig(audioConfig);
+  }
+
+  @ReactProp(name = "isLocalRecordingEnabled")
+  public void setIsLocalRecordingEnabled(@NonNull IVSBroadcastCameraView view, boolean enabled) {
+    view.setIsLocalRecordingEnabled(enabled);
+  }
+
+  @ReactProp(name = "isRecordOnlyMode")
+  public void setIsRecordOnlyMode(@NonNull IVSBroadcastCameraView view, boolean enabled) {
+    view.setIsRecordOnlyMode(enabled);
   }
 }

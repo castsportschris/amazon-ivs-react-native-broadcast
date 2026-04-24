@@ -52,6 +52,17 @@ class IVSBroadcastCameraView: UIView {
     }
   }
   
+  @objc var isLocalRecordingEnabled: Bool = false {
+    didSet {
+      self.broadcastSession.isLocalRecordingEnabled = isLocalRecordingEnabled
+    }
+  }
+  @objc var isRecordOnlyMode: Bool = false {
+    didSet {
+      self.broadcastSession.isRecordOnlyMode = isRecordOnlyMode
+    }
+  }
+  @objc var onLocalRecordingSaved: RCTDirectEventBlock?
   @objc var onIsBroadcastReady: RCTDirectEventBlock?
   @objc var onAudioSessionInterrupted: RCTDirectEventBlock?
   @objc var onAudioSessionResumed: RCTDirectEventBlock?
@@ -179,6 +190,11 @@ class IVSBroadcastCameraView: UIView {
   override func didMoveToSuperview() {
     if (self.superview != nil && !self.broadcastSession.isInitialized()) {
       do {
+        // Wire the local recording saved callback before init so it's
+        // available when the recording service is created
+        self.broadcastSession.onLocalRecordingSaved = { [weak self] fileURL in
+          self?.onLocalRecordingSaved?(["uri": fileURL.absoluteString])
+        }
         try self.broadcastSession.initiate()
         // Disable the Application Idle Timer. Prevents device from going to sleep while using the broadcast SDK, which would interrupt the broadcast
         UIApplication.shared.isIdleTimerDisabled = true
@@ -217,7 +233,15 @@ class IVSBroadcastCameraView: UIView {
   public func stop() {
     self.broadcastSession.stop()
   }
-  
+
+  public func startRecording() {
+    self.broadcastSession.startRecording()
+  }
+
+  public func stopRecording() {
+    self.broadcastSession.stopRecording()
+  }
+
   @available(*, message: "@Deprecated in favor of cameraPosition prop.")
   public func swapCamera() {
     self.broadcastSession.swapCamera(self.onReceiveCameraPreviewHandler)
