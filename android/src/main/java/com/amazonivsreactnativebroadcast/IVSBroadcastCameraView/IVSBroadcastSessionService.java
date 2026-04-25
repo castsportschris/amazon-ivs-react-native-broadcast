@@ -451,14 +451,15 @@ public class IVSBroadcastSessionService {
       );
 
       // Create custom image source and bind to mixer
-      customImageSource = broadcastSession.createImageInputSource(
-        new BroadcastConfiguration.Vec2(videoWidth, videoHeight)
-      );
+      customImageSource = broadcastSession.createImageInputSource();
+      customImageSource.setSize(videoWidth, videoHeight);
       broadcastSession.getMixer().bind(customImageSource, "custom-slot");
 
       // Create custom audio source and bind to mixer
       customAudioSource = broadcastSession.createAudioInputSource(
-        2, 48000, AudioDevice.Format.INT16
+        2,
+        BroadcastConfiguration.AudioSampleRate.RATE_48000,
+        AudioDevice.Format.INT16
       );
       broadcastSession.getMixer().bind(customAudioSource, "custom-slot");
 
@@ -487,6 +488,11 @@ public class IVSBroadcastSessionService {
 
   public void deinit() {
     if (localRecordingService != null) {
+      // Stop IVS feeds first in case the user navigated away without
+      // calling stop() explicitly — otherwise the audio capture thread
+      // may still be posting appendBuffer runnables that would fire
+      // against an about-to-be-released session.
+      localRecordingService.disableIvsFeeds();
       localRecordingService.tearDown();
       localRecordingService = null;
     }
@@ -530,6 +536,12 @@ public class IVSBroadcastSessionService {
     // Stop local recording first so the file is finalized before broadcast stops
     if (isLocalRecordingEnabled && localRecordingService != null) {
       localRecordingService.stopRecording();
+      // Stop feeding IVS before broadcastSession.stop(). The audio capture
+      // thread keeps running until view-destroy/tearDown — without this,
+      // appendBuffer calls can fire against a stopped/released native
+      // AudioDevice during the gap (potentially many seconds), producing
+      // SIGSEGV inside Java_com_amazonaws_ivs_broadcast_AudioSource_appendBuffer.
+      localRecordingService.disableIvsFeeds();
     }
     broadcastSession.stop();
   }

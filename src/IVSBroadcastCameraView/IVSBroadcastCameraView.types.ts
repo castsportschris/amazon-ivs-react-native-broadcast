@@ -241,13 +241,17 @@ export interface IEventHandlers {
   onMediaServicesWereLost?(): void;
   onMediaServicesWereReset?(): void;
   /**
-   * Called when the local recording has been saved to the device's gallery
-   * after a broadcast ends (or after `stopRecording()` in record-only mode).
+   * Called when the local recording has been saved after a broadcast ends
+   * (or after `stopRecording()` in record-only mode). On both platforms a
+   * copy is also placed in the device gallery as a side effect.
+   *
    * Only fires when `isLocalRecordingEnabled` or `isRecordOnlyMode` is true.
    *
-   * @param uri - The URI of the saved MP4.
-   *   iOS: file:// URI pointing to the temp file (available until cleaned up).
-   *   Android: content:// URI from MediaStore.
+   * @param uri - A `file://` URI pointing to the recorded MP4 in the app's
+   *   cache. Suitable for upload via Expo `FileSystem.uploadTaskStartAsync`.
+   *   The native side does NOT auto-clean this file — call
+   *   `FileSystem.deleteAsync(uri)` once you're done with it (e.g. after the
+   *   upload finishes) to avoid leaking storage over time.
    */
   onLocalRecordingSaved?(event: { uri: string }): void;
 }
