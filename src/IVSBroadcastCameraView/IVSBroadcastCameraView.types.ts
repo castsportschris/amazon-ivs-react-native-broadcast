@@ -214,6 +214,34 @@ interface IBaseProps {
    * Default: false.
    */
   readonly isRecordOnlyMode?: boolean;
+  /**
+   * When true, the camera captures at 4K and an on-device CoreML model
+   * detects the ball each frame. A 1920x1080 crop window slides smoothly
+   * across the 4K source frame to follow the ball, and that cropped frame
+   * is what gets streamed to IVS and/or written to the local file.
+   *
+   * Works in all three modes (live, record-only, live+record). Combine with
+   * `autoTrackingModelName` to specify which CoreML model to use.
+   *
+   * Forces the custom-capture path even in live-only mode (the IVS SDK's
+   * built-in camera doesn't expose CMSampleBuffers we can run ML on).
+   *
+   * Requires a device that supports 4K capture. Callers should disable this
+   * gracefully on unsupported devices.
+   *
+   * Default: false.
+   */
+  readonly autoTrackingEnabled?: boolean;
+  /**
+   * Filename (without extension) of the CoreML object-detection model bundled
+   * with the app. Required when `autoTrackingEnabled` is true. The model must
+   * detect the COCO "sports ball" class (label ID 37 in 91-class COCO).
+   *
+   * Cast Sports ships with `"BallDetector"` — a CoreML conversion of
+   * TorchVision's SSDLite320-MobileNetV3-Large (BSD license). Built from
+   * `packages/amazon-ivs-react-native-broadcast/scripts/convert_ball_detector.py`.
+   */
+  readonly autoTrackingModelName?: string;
 }
 
 export interface IEventHandlers {

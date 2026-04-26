@@ -16,6 +16,8 @@ RCT_EXPORT_VIEW_PROPERTY(logLevel, NSString)
 RCT_EXPORT_VIEW_PROPERTY(sessionLogLevel, NSString)
 RCT_EXPORT_VIEW_PROPERTY(isLocalRecordingEnabled, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(isRecordOnlyMode, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(autoTrackingEnabled, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(autoTrackingModelName, NSString)
 
 // Event handlers props
 RCT_EXPORT_VIEW_PROPERTY(onIsBroadcastReady, RCTDirectEventBlock)

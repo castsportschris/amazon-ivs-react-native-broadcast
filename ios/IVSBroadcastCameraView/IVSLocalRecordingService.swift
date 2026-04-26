@@ -56,6 +56,24 @@ class IVSLocalRecordingService: NSObject {
     /// delegates and AVAssetWriter appends run on this queue to avoid races.
     private let processingQueue = DispatchQueue(label: "com.castsports.localrecording.processing")
 
+    /// Capture-session preset used by configure(). Subclasses may override
+    /// this in init to drive a different source resolution (e.g., 4K for
+    /// auto-tracking). Falls back to .high if the requested preset isn't
+    /// supported on the current device.
+    var preferredSessionPreset: AVCaptureSession.Preset = .high
+
+    // MARK: - Frame processing hook
+
+    /// Override point for subclasses to transform each video frame before it
+    /// fans out to the IVS custom source and AVAssetWriter. Audio frames are
+    /// not routed through this hook.
+    ///
+    /// Default implementation passes the buffer through unchanged.
+    /// Returning nil drops the frame entirely (no fan-out).
+    func processVideoFrame(_ sampleBuffer: CMSampleBuffer) -> CMSampleBuffer? {
+        return sampleBuffer
+    }
+
     // MARK: - Configuration
 
     /// Set up the AVCaptureSession with the specified camera and resolution.
@@ -64,8 +82,11 @@ class IVSLocalRecordingService: NSObject {
         let session = AVCaptureSession()
         session.beginConfiguration()
 
-        // Prefer high preset — we'll constrain via AVAssetWriter settings.
-        if session.canSetSessionPreset(.high) {
+        // Use the preferred preset (subclasses may request 4K). Fall back to
+        // .high if the device doesn't support the requested preset.
+        if session.canSetSessionPreset(preferredSessionPreset) {
+            session.sessionPreset = preferredSessionPreset
+        } else if session.canSetSessionPreset(.high) {
             session.sessionPreset = .high
         }
 
@@ -324,20 +345,30 @@ class IVSLocalRecordingService: NSObject {
 extension IVSLocalRecordingService: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        // Route to IVS custom source (for live streaming)
+        // For video frames, run the transform hook once and use the result for
+        // both fan-out destinations. The default hook is pass-through, so this
+        // is byte-identical to the prior behavior unless a subclass overrides.
+        // Audio frames are not routed through the hook.
+        let videoBuffer: CMSampleBuffer?
         if output is AVCaptureVideoDataOutput {
-            // Set orientation per-frame (matches official IVS sample)
             if connection.isVideoOrientationSupported {
                 connection.videoOrientation = .landscapeRight
             }
+            guard let processed = processVideoFrame(sampleBuffer) else { return }
+            videoBuffer = processed
+        } else {
+            videoBuffer = nil
+        }
 
+        // Route to IVS custom source (for live streaming)
+        if let video = videoBuffer {
             if frameCount % 300 == 0 {
-                let fmt = CMSampleBufferGetFormatDescription(sampleBuffer)
+                let fmt = CMSampleBufferGetFormatDescription(video)
                 let dims = fmt.map { CMVideoFormatDescriptionGetDimensions($0) }
                 print("[IVSLocalRecording] Video frame #\(frameCount), dims=\(String(describing: dims)), imgSource=\(customImageSource != nil ? "set" : "nil")")
             }
             frameCount += 1
-            customImageSource?.onSampleBuffer(sampleBuffer)
+            customImageSource?.onSampleBuffer(video)
         } else if output is AVCaptureAudioDataOutput {
             if !isMuted {
                 customAudioSource?.onSampleBuffer(sampleBuffer)
@@ -347,16 +378,18 @@ extension IVSLocalRecordingService: AVCaptureVideoDataOutputSampleBufferDelegate
         // Route to AVAssetWriter (for local recording)
         guard isRecording, let writer = assetWriter, writer.status == .writing else { return }
 
+        let bufferForWriterTiming = videoBuffer ?? sampleBuffer
+
         // Start the writer session on the first sample buffer's timestamp
         if !sessionAtSourceTime {
-            let startTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let startTime = CMSampleBufferGetPresentationTimeStamp(bufferForWriterTiming)
             writer.startSession(atSourceTime: startTime)
             sessionAtSourceTime = true
         }
 
-        if output is AVCaptureVideoDataOutput {
+        if output is AVCaptureVideoDataOutput, let video = videoBuffer {
             if let input = videoWriterInput, input.isReadyForMoreMediaData {
-                input.append(sampleBuffer)
+                input.append(video)
             }
         } else if output is AVCaptureAudioDataOutput {
             if !isMuted, let input = audioWriterInput, input.isReadyForMoreMediaData {

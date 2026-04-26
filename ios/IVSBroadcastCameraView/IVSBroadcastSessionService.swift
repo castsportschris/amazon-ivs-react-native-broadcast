@@ -30,7 +30,20 @@ class IVSBroadcastSessionService: NSObject {
   var isLocalRecordingEnabled: Bool = false
   /// When true, only the local recording service is created (no IVS session).
   var isRecordOnlyMode: Bool = false
+  /// When true, we capture at 4K and crop a 1080p window driven by on-device
+  /// ball detection. Forces the custom-capture path even in live-only mode.
+  var autoTrackingEnabled: Bool = false
+  /// Filename (without extension) of the CoreML detection model bundled with
+  /// the app. Required when autoTrackingEnabled is true.
+  var autoTrackingModelName: String?
   private var localRecordingService: IVSLocalRecordingService?
+
+  /// Whether the service should manage its own AVCaptureSession (instead of
+  /// letting the IVS SDK manage the camera). True for record-only, live+record,
+  /// or any mode with auto-tracking on.
+  private var useCustomCapture: Bool {
+    return isRecordOnlyMode || isLocalRecordingEnabled || autoTrackingEnabled
+  }
   private var customImageSource: (any IVSCustomImageSource)?
   private var customAudioSource: (any IVSCustomAudioSource)?
   var onLocalRecordingSaved: ((_ fileURL: URL) -> Void)?
@@ -283,14 +296,25 @@ class IVSBroadcastSessionService: NSObject {
     }
   }
   
+  /// Create a recording service of the appropriate concrete type. Returns
+  /// IVSAutoTrackingRecordingService when auto-tracking is enabled and a model
+  /// name is set; otherwise the base IVSLocalRecordingService.
+  private func makeLocalRecordingService() -> IVSLocalRecordingService {
+    if autoTrackingEnabled, let modelName = autoTrackingModelName, !modelName.isEmpty {
+      print("[IVSBroadcast] Auto-tracking enabled with model: \(modelName)")
+      return IVSAutoTrackingRecordingService(modelName: modelName)
+    }
+    return IVSLocalRecordingService()
+  }
+
   public func initiate() throws {
     if (!self.isInitialized()) {
       try self.preInitiation()
 
-      print("[IVSBroadcast] initiate() — isLocalRecordingEnabled=\(isLocalRecordingEnabled), isRecordOnlyMode=\(isRecordOnlyMode)")
+      print("[IVSBroadcast] initiate() — isLocalRecordingEnabled=\(isLocalRecordingEnabled), isRecordOnlyMode=\(isRecordOnlyMode), autoTrackingEnabled=\(autoTrackingEnabled)")
       if isRecordOnlyMode {
         // ── Record-only: no IVS session at all, just local camera + recording ──
-        let recordingService = IVSLocalRecordingService()
+        let recordingService = makeLocalRecordingService()
         recordingService.onRecordingSaved = { [weak self] fileURL in
           self?.onLocalRecordingSaved?(fileURL)
         }
@@ -306,8 +330,11 @@ class IVSBroadcastSessionService: NSObject {
 
         self.localRecordingService = recordingService
         print("[IVSBroadcast] Record-only mode initialized (no IVS session)")
-      } else if isLocalRecordingEnabled {
-        // ── Following the official Amazon IVS custom sources sample exactly:
+      } else if useCustomCapture {
+        // ── Live + (optionally) record, or live with auto-tracking ──
+        // We own the AVCaptureSession and feed IVS via custom sources. When
+        // isLocalRecordingEnabled is true, we also write to disk in parallel.
+        // Following the official Amazon IVS custom sources sample exactly:
         // https://github.com/aws-samples/amazon-ivs-broadcast-ios-sample
         //   /BasicBroadcast/ViewControllers/CustomSourcesViewController.swift
 
@@ -342,7 +369,7 @@ class IVSBroadcastSessionService: NSObject {
         print("[IVSBroadcast] Custom sources created and attached")
 
         // Set up the local recording service with our custom sources
-        let recordingService = IVSLocalRecordingService()
+        let recordingService = makeLocalRecordingService()
         recordingService.customImageSource = imgSource
         recordingService.customAudioSource = audSource
         recordingService.onRecordingSaved = { [weak self] fileURL in
@@ -446,7 +473,7 @@ class IVSBroadcastSessionService: NSObject {
       return
     }
 
-    if isLocalRecordingEnabled, let imgSource = self.customImageSource {
+    if (isLocalRecordingEnabled || autoTrackingEnabled), let imgSource = self.customImageSource {
       // Use the IVS custom source's own preview view — this renders
       // the frames as they flow through the SDK, matching what viewers see.
       if let preview = try? imgSource.previewView(with: self.cameraPreviewAspectMode) {
@@ -465,7 +492,7 @@ class IVSBroadcastSessionService: NSObject {
   public func setCameraPosition(_ cameraPosition: NSString?, _ onReceiveCameraPreview: @escaping onReceiveCameraPreviewHandler) {
     if let cameraPositionName = cameraPosition {
       if (self.isInitialized()) {
-        if isRecordOnlyMode || isLocalRecordingEnabled {
+        if useCustomCapture {
           localRecordingService?.swapCamera()
           self.getCameraPreviewAsync(onReceiveCameraPreview)
         } else {
@@ -497,7 +524,7 @@ class IVSBroadcastSessionService: NSObject {
   
   public func setIsMuted(_ isMuted: Bool) {
     if (self.isInitialized()) {
-      if isRecordOnlyMode || isLocalRecordingEnabled {
+      if useCustomCapture {
         localRecordingService?.setMuted(isMuted)
       } else {
         self.muteAsync(isMuted)

@@ -62,6 +62,16 @@ class IVSBroadcastCameraView: UIView {
       self.broadcastSession.isRecordOnlyMode = isRecordOnlyMode
     }
   }
+  @objc var autoTrackingEnabled: Bool = false {
+    didSet {
+      self.broadcastSession.autoTrackingEnabled = autoTrackingEnabled
+    }
+  }
+  @objc var autoTrackingModelName: NSString? {
+    didSet {
+      self.broadcastSession.autoTrackingModelName = autoTrackingModelName as String?
+    }
+  }
   @objc var onLocalRecordingSaved: RCTDirectEventBlock?
   @objc var onIsBroadcastReady: RCTDirectEventBlock?
   @objc var onAudioSessionInterrupted: RCTDirectEventBlock?

@@ -15,6 +15,11 @@ Pod::Spec.new do |s|
 
   s.source_files = "ios/**/*.{h,m,mm,swift}"
 
+  # CoreML models for the auto-tracking feature. .mlpackage and .mlmodel
+  # files placed in ios/MLModels/ are bundled with the host app and compiled
+  # by Xcode's build phase to .mlmodelc at build time.
+  s.resources = ["ios/MLModels/*.mlpackage", "ios/MLModels/*.mlmodel"]
+
   s.dependency "React-Core"
   s.dependency "AmazonIVSBroadcast", "~> #{package["sdkVersion"]["ios"]}"
 end
